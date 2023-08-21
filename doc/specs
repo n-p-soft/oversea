@@ -1,0 +1,1512 @@
+Oversea language specification
+==============================
+
+  Oversea is a translated, generic C-style programming language.
+
+  The Oversea translator is the main component used to process source code
+files for the language. Actually, two translator frontends are used: the
+Oversea frontend for processing Oversea source code and a C99 frontend, to
+parse pure C99 source code files. The backends of the translator produce
+source code files that can be processed by another compiler. Actually, only
+C backends are planned, one per C-compiler supported.
+
+                       _____________________________________________
+                      | Oversea translator                          |
+                      |  ______________                             |
+                      | | C99 frontent |_____                       |
+  C99 source code --> | |______________|     |  |_ C clang backend  |
+                      |                      |__|_ C gcc backend    =>
+                      |  __________________  |  |_ ..               | 
+  Oversea code -----> | | Oversea frontend |_|                      | 
+                      | |__________________|                        | 
+                      |_____________________________________________|
+
+
+  The translator includes a standard C preprocessor.
+
+
+===============================================================================
+= SPECIFICATION LEVEL 0                                                       =
+===============================================================================
+
+NOTE: in the following, Oversea language keywords are outlined using uppercase
+letters, although the translator itself is not case sensitive
+
+
+Language selection
+==================
+
+  The source code file extension is used to select which translator frontend is
+to be run: ".c" for C code and ".ovc" for Oversea sources. In the last case,
+the first keyword after optional comments at the beginning of the file must be
+the unit declarator.
+
+
+C99 frontend
+============
+
+  For C source code, the translator only runs the C preprocessor before sending
+the text to the backend, so that the Oversea translator can be used in the best
+transparent way in place of another C compiler. This allows existing C source
+files to be reused together with Oversea files.
+
+
+Oversea source code organization
+================================
+
+  The main element of the source code is the "unit". Each unit is associated to
+one and only one source code file, which must be named as the unit. If the unit
+declarator is "unit my_unit1 .." then the file must be named "my_unit1.ovc".
+
+  An Oversea project may be based on multiple units: they must be stored under a
+directory tree, in a hierarchical way. The master unit of the project, named as
+the project itself (with the ".ovc" extension) is mandatory, and relative units
+are stored in the tree, reflecting the logical path (or project-path) of the
+unit. Taking "my_project" as an example of a project:
+
+        my_project.ovc: master unit of "my_project"
+        my_project/
+          |_ a.ovc: unit "a", logical path "my_project.a"
+          |_ test/
+              |_ test1.ovc: unit "test1" logical path "my_project.test.test1"
+
+
+  When importing other units or objects, the translator will search for the
+corresponding files under each directory provided by the "-I" command-line flag
+passed to the translator.
+
+
+General rules for code source files
+===================================
+
+  The following rules applies for each unit's file:
+
+  - case matters and language reserved keywords are UPPERCASE.
+
+  - the names of objects (variables, methods, units..) are words or tiret 
+    separated words of characters a..z A..Z 0..9 _ and words must start with
+    a lower letter.
+
+  - there must be only one statement by line and there are commonly ended
+    with a semicolon (see "Blocks of code" below).
+
+  - the indentation of the source code text is done using spaces, not tabs,
+    that are rejected by the compiler as an error.
+
+  - comments are enclosed between (* and *).
+
+  - a space should be used between the name of a method and the parenthesis
+    that opens the parameters declaration.
+
+  - the first statement after optional initial comments is "UNIT .. ".
+
+  - the last statement taken into account by the compiier is "END UNIT;".
+
+
+Keywords
+========
+
+  The reserved keywords of the language cannot be used as object's names and
+must be written in uppercase letters. They are:
+
+  PACKAGE, UNIT, PROGRAM, LIBRARY, SPEC, IMPLEMENTS,
+  VAR, CONST, PROC, FUNC, EXPORT, OVERWRITES, HIDDEN,
+  CALL, ONCE, CHECK, SETTER, GETTER, DESTROY, START,
+  NONE, EXIT, INIT, ERROR, RAISE, RESUME, GUARD, TYPE,
+  BYTE, INT, BOOL, TRUE, FALSE, REF, ARRAY, OF, ASCII,
+  CAST, LIMIT, MOD, DIV, POW, AND, OR, NOT, DUP
+  
+
+Runtime elements
+================
+
+  A runtime element if an association between one identifier (a name that may
+be fully qualified or relative to one unit) and a memory area storing some
+data:
+
+  unit: the data is the table of methods, the set of variables, etc. 
+        The element is associated to a UNIT block.
+
+  variable: the data is the content or value of the variable. This element
+            is associated to each statement of the VAR block.
+
+  constant: the data is the value of the constant. This element is associated
+            to each statement of the CONST block.
+
+  type: the data is the definition of the type. This element is associated to
+        each statement of the TYPE block.
+
+  procedure: the data is the code of the procedure and its definition.
+
+  function: the data is the code of the procedure and its definition.
+
+  running context: (see below) the context of the execution flow.
+
+  Some elements do not have identifiers attributed by the author of the source
+code but some internal reference known of the compiler:
+
+  litteral: mainly a number, integer or real, the data is the value.
+
+  expression: the data is the tree of other elements and operators that was
+              generated during the parsing of the expression.
+
+  code: blocks of code that are tied to another element.
+
+  Each runtime element of the source code (notably variables) must be seen
+by the programmer as a "reference" to a memory area but not directly as a
+pointer to this area. If an interpreter is used to execute the code produced
+by the compiler, the physical address relative to one element is subject to
+change at any time. So "reference" is more exact than "pointer": a pointer's
+value generally does not change if the programmer does not want it to change.
+
+  Each runtime element is also associated to a type:
+
+  - one of the built-in types (see below)
+
+  - a type defined by a unit
+
+  - one internal type
+
+  The built-in type for any runtime element is REF (see "The REF type").
+
+
+Identifiers and fully qualified names
+=====================================
+
+  Any element in the source code may be associated one identifier that is
+a word made of the characters a..z A..Z 0..9 _ with the first one being
+a lower letter.
+ 
+  A fully qualified name is a sequence of such identifiers separated by -. 
+
+  The level of a fully qualified name is:
+
+  - 0 if the name has no - (unit is a "master" unit)
+  - 1 if the name has one - (e.g. "project1-partA")
+  - 2 if the name has two - (e.g. "project1-A-B")
+  - ..
+
+  The fully qualified name is used to link together the files (and units) that
+are relative to the same logical project, which can be a program, a library..
+The name of the project is the first identifier of the qualified name. So, the
+following unit's names are related to the same project "test": test, test.part1,
+test.lib, but not "tst.lib".
+
+  Variables, constants, methods are declared using a single word, whereas units
+are declared using a fully qualified name.
+
+
+Units
+=====
+
+  Each source code file that is taken into account by the compiler must start
+with the following statement, optionaly preceded with comments:
+
+    UNIT fully_qualified_name; [unit_tag;]
+
+  A tag may be added at the end of the unit's declaration, in order to declare
+special units. The following five tags are exclusive and must be alone if added
+to the declaration:
+
+  - PACKAGE: only units of level 0 can be tagged with this keyword, to indicate
+    that the unit is the container of some sub-projects, which can be programs
+    or libraries. This kind of unit is also a SINGLETON (see below).
+
+  - PROGRAM: this tag indicates the target of the project is an executable. It
+    must not appear more than once in the same logical project. The unit tagged
+    with it is the master unit of the project. The master unit of the program 
+    is always instanciated on startup. The name of the unit has a level of 0 or
+    1 if the unit of level 0 is a PACKAGE.
+
+  - LIBRARY: this tag indicates the target of the project is a library. It must
+    not appear more than once in the same logical project. The unit tagged with
+    it is the master unit of the project and will always be created when the
+    library is loaded. The name of the unit has a level of 0 or 1 if the unit of
+    level 0 is a PACKAGE.
+
+  - SINGLETON: a unit tagged with this word will have a static-style instance,
+    and only one, in the associated project. This instance is automatically
+    created when a program starts or a library is loaded. The name of the unit
+    has a level greater or equal than 1.
+
+  - SPEC: such a unit does not embed source code but only definitions of 
+    methods ("specification"). The name of the unit has a level greater or equal
+    than 1.
+
+  A unit is ended using the statement "END UNIT;". If there is text after this
+statement, it is ignored by the compiler.
+
+  By adding the tag "EXPORT;" to a LIBRARY unit's declaration line, then all
+variables and methods will be usable from another project. For a more fine-
+grained export, you can add this tag to individual objects like methods rather
+than onto the unit itself.
+
+
+Code or dynamic units
+=====================
+
+  Without any of these five tags above, the unit is a part of the project and
+stores source code and type definitions. In the following, we call such a unit
+a "code-unit" or a "dynamic-unit". The name of such a unit has a level greater
+or equal than 1.
+
+  The tag "IMPLEMENTS xxx;" may be added one or more time to the code unit's
+declaration to indicate that the unit implements the specifications of the SPEC
+unit having the fully-qualified-name "xxx".
+
+  For example:    (* a spec unit *)
+                  UNIT my_spec1; SPEC;
+                  PROC a_proc;
+                  END UNIT;
+                 -------------------------
+                  (* a code unit *)
+                  UNIT test-my_unit; IMPLEMENTS my_spec1;
+                  VAR { (* variables local to the unit *)
+                      a : INT;
+                  }
+                  PROC a_proc; (* empty procedure *)
+                  END PROC;
+                  END UNIT;
+
+
+Specifications
+==============
+
+  Units tagged with the "SPEC" keyword stores only specifications:
+ 
+  - no initial declarations (variables, constants),
+
+  - only methods declarations without any tag or any body nor "ENDxxx"
+    statements.
+
+  For example:
+
+    UNIT my_specs_1; SPEC;
+    PROC a_procedure;
+    FUNC a_function (INT i) : INT;
+    END UNIT;
+
+
+Execution context - Empty context
+=================================
+
+  At any time, when running a program, there is an active "running context". It
+is built of:
+
+  - one part of code and its execution flow
+
+  - some variables and constants
+
+  - some internal data 
+
+  Any of the following objects of the language are associated a running context:
+code-units, methods (procedures and functions).
+
+  A PROGRAM, LIBRARY or SINGLETON unit is associated only one running context
+when the execution of the project starts.
+
+  A contrario, a code (or dynamic) unit may be associated to multiple running
+contexts because it can be started many times, and each instance is independent
+of the other, having its own running context. 
+
+  There is one "empty running context" associated with no code and no data. It
+cannot be used and one error will be raised if the programmer tries to use it.
+This unique context is associated to the keyword NONE.
+
+  Access to elements of units, mostly call of methods or access to variables is
+realized using a dot "." after the variable storing the runtime context of the
+unit. For SINGLETON units, the fully qualified name of the unit is used before
+the dot:
+
+    UNIT test1; SINGLETON;
+    PROC tool1;
+    END PROC;
+    END UNIT;
+
+    here calling "tool1" is done with the statement "CALL test1.tool1;".
+
+    
+Life of code units
+==================
+
+  As explained in a previous section, these units are declared without using
+one of the following tags: PACKAGE, LIBRARY, PROGRAM, SPEC, SINGLETON. They are
+used to store and organize the major part of the source code of a project.
+
+  Creating the context of a code-unit is done in two steps:
+
+  (1) a variable of the type of the unit is declared somewhere. It is assigned 
+      the value NONE.
+
+  (2) the variable is assigned the running context of the unit using the START
+      or the DUP keywords. The START statement creates a new runtime context
+      whereas the DUP one duplicates another runtime context' state (that is,
+      the content of the variables of the unit are copied).
+
+  The two steps may be combined in one.
+
+    UNIT test-unit2;
+    PROC contexts;
+    VAR {
+      u : test-unit; (* value is NONE *)
+      v : test-unit; (* value is NONE *)
+      w : test-unit2;
+    }
+    START u;
+    CALL u.a_proc; (* ok *)
+    v := u; (* they both refer to the same running context *)
+    CALL w.some_proc; (* error, w = NONE *)
+    w := u; (* type error *)
+    v := DUP u; (* ok, the variables of v are now in the *)
+                (* same state than u but v <> u *)
+    END PROC;
+      
+  When using the START keyword, a runtime element referencing a new running
+context is created and assigned to a variable. The variables of the associated
+code-unit are initialized and the startup code, if any, is run (see "INIT" tag
+below), temporary stopping the calling running context.
+ 
+  If one running context of a code-unit is no more needed, it can be destroyed
+using a DESTROY statement applied to a variable:
+
+    DESTROY my_elt;
+
+  After this, the variable is set to NONE automatically.
+
+  Example (continued):
+    
+    START u;
+    v = DUP u;
+    DESTROY u; (* u = NONE, a running context was destroyed *)
+    CALL v.a_proc; (* ok, v is alive *)
+    DESTROY v; (* v = NONE *)
+
+  At any time, some variables may refer to the same running context of a code-
+unit (as "u" and "v" in the example). When there is no more such variable
+referencing the same context, it is destroyed. When one of the variables that
+refers to the same running context is DESTROYed, then all these variables are
+automatically set to NONE. In all cases, the running context of the target
+code-unit is not usable any more and its procedure tagged EXIT, if any, is 
+called.
+  
+  It implies that when the running context associated to the variable that
+stores the running context of another unit-code is ended (for example, when
+exiting the procedure "contexts" above), automatic desctruction of another
+running contexts may occur ("v" in the first part of the example).
+
+  Setting to NONE a variable storing the running context of some code-unit
+will not automatically destroy this context if there is another variable that
+stores the same context.
+
+  For more information, see below "Casting of units".
+  
+   
+Blocks of code
+==============
+
+  At the file's level, the logical blocks of source code text are delimited
+in two ways:
+
+  (1) a beginning statement "XXX;" and a ending one "END XXX;". This is for
+      example the outermost block of the unit itself:
+        UNIT xxx;
+        ..
+        END UNIT;
+
+      Other blocks of this type are:
+        PROC .. END PROC, FUNC .. END FUNC, LOOP .. END LOOP
+
+      In this case, starting and ending statements are terminated by a semi-
+      colon and must be alone or their line of text. This is necessary to 
+      emphasize the major blocks of the code and to add eventual tags. A tag
+      is a semicolon terminated statement like "EXPORT;".
+
+  (2) a beginning open curly brace { and a ending one }. In this case, if a
+      statement stays before the opening curly brace to caracterize the block,
+      it has no ending semicolon. Examples:
+
+      TYPE { list_of_statements }
+      VAR { list_of_statements }
+      CONST { list_of_statements }
+      IF xxx THEN { .. } ELSE { .. }
+      WHEN xxx THEN { .. }
+      GUARD { .. }
+
+      Curly braces can be preceded by a newline or at least a space.
+
+      Inside such a block, each statement of a list of statements is ended with
+a semicolon (for statements that are not of the type (1)). There must be only
+one statement per line, possibly followed by semicolon ended tags.
+
+
+
+Initial block of declarations
+=============================
+
+  Units and methods may have, after their declaration statement UNIT, PROC or
+FUNC, an initial block that is used to declare variables and constants.
+
+  The optional block of constants declarations must be the first, followed by
+the optional block of types and the optional block of variables:
+
+  CONST { 
+  ..
+  }
+  TYPE {
+  ..
+  }
+  VAR {
+  ..
+  }
+
+
+Dynamic units extension
+=======================
+
+  Extension is a mecanism that concerns only dynamic units having a fully
+qualified name of level 2 or more. It is associated to an extension of the
+name of another unit, for example:
+
+  - "shapes.box.square" is an extension of "shapes.box" but not of "shapes"
+  - "shapes.circle" is not an extension of "shapes.box" nor "shapes"
+
+  When a unit is an extension of another dynamic unit, the source code of this
+unit is virtually merged with the code of the unit that is extended.
+
+  Some conflicts between the code of the unit and the code of the unit that is
+extended may appear and may concern variables, constants, etc. They are resolved
+by using some tags in the extended unit. As an example:
+
+    UNIT shapes-box             UNIT shapes-box-square
+
+    VAR {                       VAR {
+      area: INT;                   l1: INT; --> error, is in shapes.box 
+      l1: INT;                     l2: INT; HIDDEN;
+      l2: INT;                     l: REAL; 
+    }                           }
+
+    PROC fill;                  PROC fill; OVERWRITES;
+
+  Tags that are used to resolve conflicts are:
+
+  - OVERWRITES: indicates in an extended unit that a procedure or a function
+    will replace the one in the unit that is extended. They must have exactly
+    the same signature (parameters, return type).
+
+  - HIDDEN: applied to a variable, a constant or a method in the extended unit.
+    The hidden object must be present in the unit that is extended and will not
+    be available any more in the extended unit or any of its extensions.
+
+  Note that constants cannot be overwritten nor hidden.
+
+  
+Extension of SINGLETON and SPEC
+===============================
+
+  When extending a SINGLETON unit, the SINGLETON keyword must also appear in
+the extended unit declaration. Same thing for SPEC units. 
+
+
+Declaration of constants
+========================
+
+  In a unit, constants are declared using a simgle identifier. The CONST block
+stands in the unit declaration part or in a method's one.
+
+  The keyword CONST is used to start the declaration section. Each constant
+must also be initialized and should be on a single line of text.
+
+  A constant may be accessible elsewhere in it's project using a fully qualified
+name. Variables declared at the unit's level can be exported using the EXPORT 
+keyword. But constants defined inside a method are local to this method.
+
+  Constants cannot be HIDDEN nor overwritten. They are read-only but the tag
+"CHECK" can be added as for variables (see below "Variables").
+
+  A constant is assigned a value using the operator := . The underlying type of
+the data is guessed by the compiler.
+
+  Example:   CONST { PI := 3.14; }
+
+
+Declaration of user types
+=========================
+
+  Definitions of user's types that are not code-unit types can be declared in
+the TYPE block of the initial declarations of a unit or a method. 
+
+  In the first case, a TYPE definition can be EXPORTed but is known everywhere
+in the project by default. 
+
+  In the second case, it is local to the method and cannot be EXPORTed.
+
+  Types cannot be HIDDEN nor overwritten.
+
+  A type is declared using the equal sign preceded by a single identifier and
+followed by the definition:
+
+    TYPE {
+      my_array = ARRAY [1..10] OF INT;
+    }
+
+
+Built-in numeric types
+======================
+
+  The following type are built-in the compiler.
+
+  - integer types:
+
+    BYTE: a signed byte (-128..127).
+
+    +BYTE+: an unsigned byte (0..255).
+
+    INT: a signed 32-bit integer (-2^31..2^31-1).
+
+    +INT+: an unsigned 32-bit integer (0..2^32-1).
+
+    An hexadecimal number is prefixed with "0x", an octal one by "0o" and a
+    binary one by "0b". Examples are: -0x123, 0b101101, -0o745.
+
+  - boolean type:
+ 
+    BOOL: a boolean that can takes two values: TRUE and FALSE. 
+
+
+The ASCII (simple string) type
+==============================
+
+  ASCII is an array of unsigned bytes, terminated with a zero byte. This type
+of ASCII string is internaly used to define constants.
+   
+  The brackets notation can be used to access individual characters (index is
+0-based). The terminal zero cannot be changed.
+
+  This type has a public accessor named "length" that returns the count of 
+characters until the first zero encountered. The string cannot grow.
+
+  When using the assignment operator, a new sequence of characters is always
+ created.
+
+  Two simple strings are equal if and only if they have the same length and
+the same content.
+
+  A constant of this type is written between double quotes. Inside the quotes,
+standard escape sequences are allowed: one back-slash followed by some other
+characters:
+
+    \"    a double quote (that is not the end of the constant)
+    \t    a tab
+    \n    a newline character
+    \xhh  with h any hexadecimal digit: the ASCII character having code  0xhh
+          (\x00 to \xFF)
+
+      CONST {
+        word : ASCII := "hello"; (* word.length = 5 *)
+      }
+      VAR {
+        s : ASCII;
+        b : +BYTE+;
+      }
+      ..
+      b := word[2]; (* b = ASCII code of "l" *)
+      word[1] = 65; (* error, word is a constant *)
+      s := word; (* s = word (a copy) *)
+      s[1] = 65; (* ok, s = "hallo", s <> word *)
+      s[3] = 0; (* now s.length = 3 and s <> word *)            
+
+
+Declaration of variables
+========================
+
+  Inside a unit, variables are declared using a single identifier, and stands
+either in the unit declaration part or inside a method's one.
+  
+  They are local to the unit or the method inside the unit. Variables declared
+at the unit's level (not in a method) are usable in extended units, excepted if
+they are explicitly HIDDEN in the extended unit.
+
+  The keyword VAR is used to start the declaration section.
+
+  Any use of an uninitialized variable will raise an error.
+
+  Each variable is declared on its own line of text, ended with a semicolon and
+possibly followed by some tags. A type must be specified after the name and one
+colon. An assignment may be added using the symbol ":=". If there is no assign-
+ment, the variable is left uninitialized and cannot be used without raising an
+error. Example:
+
+    VAR {
+      my_string : ASCII := "some words;
+      i : INT; (* uninitialized *)
+      t : my_array; (* a user type *)
+    }
+
+  List of supported tags for variables:
+
+  - ONCE: added to a non-initialized variable declaration, this tag specify
+    that after the first assignment to the variable, its content cannot be
+    changed.
+
+  - CHECK: ensure that the content of the variable is not altered between two
+    read or write operations. The variable must be initialized in the declara-
+    tion. Used onto a code-unit type, it will only ensure that the running
+    context of this code-unit will not change (for example to another instance
+    of the code-unit).
+
+  - SECURE: ensure that the value of the variable is stored in memory in an
+    obfuscated way. Examples:
+
+    VAR {
+      ii : INT := 0; CHECK;
+      j : BOOL; ONCE;
+      k : REAL;
+    }
+
+  Variables cannot be exported directly using the tag "EXPORT;" and are local
+to the unit where they are declared, available in any method of the unit. But
+they are available in extended units of this unit.
+
+  To export a variable to other sub-projects of a PACKAGE or to foreign pro-
+jects, a special accessor method can be used (see below).
+
+  The programmer should not consider that a variable is a pointer to some area
+into memory that stores a value. As explained above, a variable should be seen
+as storing a "runtime element".
+
+  A variable may be assigned the special value NONE; it becomes unassigned and
+any further use will raise an error (as for uninitialized variables).
+
+  The operator "TYPE OF" can be used to return one ASCII string that describe
+in one word the type of a variable. With preceding examples, we have:
+
+    TYPE OF my_string = "ASCII"
+    TYPE OF i = "INT"
+    TYPE OF t = "my_array"
+
+
+Limited types and ranges
+========================
+
+  It is possible to add some constrainsts on another type so that a subtype
+will be defined.
+
+  This can be done in a TYPE block by adding a tag "LIMIT" to a type declara-
+tion. The LIMIT keyword is followed either by a range notation or the fully 
+qualified name of a function:
+
+  - a range notation is a finite sequence of consecutive integers. It is
+    declared using one single identifier followed by the equal sign and two 
+    integers separated by two consecutive dots.
+
+  - if the fully qualified name of a function is added, this function must
+    return a BOOL that will be TRUE if an assignment is allowed and FALSE if
+    not (an error will be raised in this case). The type of the only parameter
+    of this function must be the tagged type, read-only. The method will be
+    called on every assignment to check the limit. Such a function must be
+    declared in a SINGLETON unit only.
+
+  When a variable is declared using a range type, the assignements are checked
+at runtime so that the value set is really allowed (else one error is raised).
+
+    UNIT limited_types; SINGLETON;
+    TYPE {
+      negatives = INT; LIMIT -5..5;
+      positives = INT; LIMIT limited_types.poscheck;
+      short_string = ASCII; LIMIT limited_types.shstr;
+    }
+    FUNC poscheck (#n# : INT) : BOOL;
+      RETURN n >= 5
+    END FUNC
+    FUNC shstr (#s# : ASCII) : BOOL;
+      (* limit the length of the string to at most ten characters *)
+      RETURN s = NONE OR s.length <= 10;
+    END FUNC
+
+    .. elsewhere in the project ..
+
+    VAR { 
+      n : negatives; 
+      p : positives;
+      s : short_string;
+    }
+    n := -3; (* ok *)
+    n := -9; (* error *)
+    p := 10; (* ok *)
+    p := 2; (* error *)
+    s := "a too long string"; (* error *)
+ 
+
+Arrays
+======
+
+  An array is an ordered list (sequence) of another type indexed using an inte-
+ger. The index is enclosed into square brackets. An array is declared using a 
+range or a positive integer:
+
+    TYPE { array_idx = INT; LIMIT -2..5; }
+    VAR {
+      a: ARRAY[array_idx] OF INT; (* range declaration *)
+      b: ARRAY[10] OF BYTE; (* indexes from 0 to 9 or 0..9 *)
+
+  Each array has a starting index and a length given by accessors to internal
+data:
+
+      a.length = 8
+      a.startIndex = -2
+
+  Each element can be retrieved using the brackets notation: a[index]. Trying
+to read an uninitialized element will return NONE.
+
+  The TYPE OF operator will return the word "ARRAY" (TYPE OF a = ARRAY). To
+grab the type of the elements, you can use the accessor "elementType":
+
+      b.elementType = "BYTE"
+
+  You can set in one statement the value for each element of an array using
+the double brackets notation:
+
+      a := [[0]]; (* all elements of a are set to 0 *)
+      a := [[NONE]]; (* all elements of a are now uninitialized *)
+ 
+  Arrays can have multiple indexes:
+
+    TYPE {
+      sub_array : ARRAY[10] of INT;
+    }
+    VAR {
+      a : ARRAY[10] of sub_array;
+    }
+    ..
+    a := [[0]];
+    a[1][2] := 3;
+
+
+The tree of units: summary of access rules
+==========================================
+
+  All the units of a logical project may be represented by a tree. Below is an
+example using two independent projects. The names of the units are indicated
+between square brackets:
+ 
+   level 0 (master unit)                  level 0 (master unit)
+      [test] PACKAGE                      [foo] PROGRAM
+   _____|_______________                  \
+   |          |         \                  level 1
+   level 1    level 1     level 1          [foo.core]
+   [test.a]   [test.b]    [test.c]
+   |PROGRAM   LIBRARY     LIBRARY
+   |                       \
+   level 2                  level 2
+   [test.a.X]               [test.c.Y]
+                              \
+                               level 3
+                                [test.c.Y.Z]
+
+  Access rules are:
+
+  - project "foo" will not access to project "test" excepted if "test.b" or 
+    "test.c" have exported items, and the master unit of "foo" has one
+    "USING test;" statement.
+
+  - inside package "test", "test.c.Y" has full access to all objects of the
+    unit "test.c" which it extends, excepted those HIDDEN in "test.c.Y".
+    Same thing inside program "foo".
+
+  - inside project "test", "test.a" can access only to methods of "test.b" and
+    "test.c". Same thing for "test.a.X" and "test.c.Y.Z" (for example).
+
+  - objects of the master unit are available anywhere in the associated tree
+    (for example, variables and methods of "foo" in "foo.core").
+
+  - constants of each unit of a project are usable from each unit of the project
+    but need to be EXPORTed to be used in another one (for example, constants of
+    "test" used in "foo").
+
+
+Imports and aliases of units
+============================
+
+  To use exported symbols of a project (commonly a LIBRARY or a PACKAGE) into
+another one, the USING statement must be present in the master unit of the
+project using them:
+
+    UNIT my_test; PROGRAM;
+
+    USING my_library;
+    USING one_long_name_package;
+
+  The exported symbols of "my_library" are now available in each units of the
+program "my_test", using a fully qualified name "my_library.xxx" or an alias.
+
+  When using exported symbols of project "one_long_named_project" into another
+project "test", an alias may be created in some unit of this last project to
+refer to the imported project:
+
+    UNIT my_test-core;
+
+    ALIAS lib one_long_name_package.one_library;
+    ..
+    PROC xxx;
+     ..
+     lib.call_a_method; (* same as one_long_name_project.call_a_method *)
+    END PROC;
+
+  The scope of an alias is the unit in which it is declared, excepted the
+aliases declared in the master unit that are usable anywhere in the project.
+
+
+Conditional blocks
+==================
+
+  There are two conditional statements:
+
+  - the IF/THEN/ELSE one,
+  - the WHEN/THEN one.
+
+  Only the "IF" has one "THEN" and one "ELSE" (mandatory). This avoids the 
+ambiguty of nested if/then/else we can appear in many cases:
+
+   if a
+   then if b
+   then c
+   else d <-- "if a" of "if b" ?
+
+  may be expressed clearly in two ways:
+
+   IF a              or    WHEN a
+   THEN WHEN b             THEN IF b
+        THEN c;                 THEN c;
+   ELSE d;                      ELSE d;
+
+
+Loops
+=====
+
+  There is only one kind of loop structure:
+
+    LOOP [var [expr]];
+    ..
+    STEP [var [expr]]; 
+    BREAK [var expr];
+    ..
+    END LOOP [var];
+
+  The code between "LOOP" and "END LOOP" is run in a repeated way until some
+"BREAK" statement exits the loop. There is two cases, when the name of a
+variable is specified in the LOOP statement and when there is no variable.
+
+  - if there is no variable specified: then no expression is allowed in "STEP"
+    nor "BREAK", nor "END LOOP" statements. "STEP" simply continue the execution
+    flow on the statement after "LOOP" and "BREAK" after "END LOOP".
+
+  - if a variable name is specified: the "END LOOP" must be followed by the 
+    same name. If there is an expression after the "LOOP", the value is set
+    into the variable when entering the loop. A "STEP" statement without any
+    expression continue the execution flow after the "LOOP". If an expression
+    is present, then the result is stored in the variable "var" before 
+    continuing the loop. A "BREAK" without any expression will exit the loop;
+    with an expression, it will exit the loop only if "var" is equal to the 
+    expression.
+
+  NOTE that the variable "var", if present, must be a local variable of the
+  method, not a unit's one.
+
+  For example:
+
+    PROC loops;
+    VAR {
+      i : INT := 1;
+      j : INT;
+      b : BOOL;
+    }
+    LOOP i i+1; (* starts the loop using i = 2 *)
+      BREAK i 10; (* exit the loop when i = 10 *)
+      LOOP b TRUE;
+        LOOP j i;
+          BREAK j i+2;
+          BREAK i 8;
+          b := FALSE;
+          STEP j j+1;
+        END LOOP j;
+        BREAK b FALSE; (* always breaking *)
+      END LOOP b;
+      STEP i i+1;
+    END LOOP i;
+    (* here i = 8 *)
+    END PROC;
+
+
+Procedures and functions declarations
+=====================================
+
+  Procedures are declared using the keyword "PROC" and functions using the
+"FUNC" one plus a "RETURN" statement. They are terminated using the statements
+"END PROC" and "END FUNC". An optional block of parameters may be added in
+the declaration (see below). The function declaration must declare the returned
+type. Both methods declarations may be followed by some tags (see below).
+
+  PROC xxx [parameters]; [tags]          FUNC yyy [parameters] : zzz; [tags]
+   .. body code ..                         .. initial declarations ... 
+  END PROC;                                .. body code ..
+                                         END FUNC;
+
+  Calling a procedure named "xxx" is done using the "CALL xxx" statement.The
+name "xxx" may be a fully qualified one.
+
+   CALL xxx;
+
+  Calling a function is done by using the function's name in one expression
+(commonly an assignment or a test) or specifying "VOID" before the function
+name to ignore the returned value:
+
+   I := my_function;        or    VOID my_function; 
+
+
+Methods parameters
+==================
+
+  Procedures and functions declarations may specify a list of parameters that
+are passed to the code of the method. They are typically enclosed between an
+opening and a closing parenthesis (..), which must be omitted if there is no
+parameters to the method.
+ 
+  The parameters in the declaration are comma-separated and a maximum of 7
+parameters is allowed. Each parameter is declared as variables are in a
+VAR { } block:
+ 
+   param1 : type [, param2 : type [ .. ] ]
+
+  When calling a method, parameters of this method are not assigned some value
+but, as explained above, a "runtime element" (or reference) that may be asso-
+ciated to a litteral, a variable, one expression, etc.
+
+  Thus parameters are transmitted "by reference" and not "by value" and may be
+altered while running the method, changing the caller's data.
+
+  To avoid any change to a variable transmitted as a parameter to the method,
+the name of the variable must be enclosed between # either in the call or in 
+the method's declaration.
+
+  Example:
+
+  UNIT param_test;
+
+  PROC proc1 (a : INT)
+  a := a + 1;
+  END PROC;
+
+  PROC proc2 (#b# : INT)
+  b := b + 1; (* always a compiler error *)
+  END PROC;
+
+  PROC proc3;
+  VAR { x : INT := 1; }
+  proc1 (x); (* after this, x = 2 *)
+  proc1 (#x#); (* after this, x = 2 again *)
+  END PROC;
+ 
+  END UNIT;
+
+
+Methods tags
+============
+
+  Procedures and functions declarations may be followed by some semicolon
+terminated tags:
+
+  - EXPORT: this tag implies that the fully qualified name of the method (that
+    is full_name_of_unit.method_name) is exported and available outside of the
+    project if an import statement is added to another project.
+
+  - OVERWRITES: this tag can be applied to one method of an unit that is an
+    extension of a unit where a method with the same name already exists. The
+    present method will replace the extended unit method code.
+
+  - GETTER, SETTER: see "Accessors" below. Only the EXPORT and OVERWRITES tags
+    can be present.
+
+  - INIT, EXIT, ERROR: see below. These methods cannot be EXPORTed and cannot
+    be tagged using GETTER or SETTER (OVERWRITES has no meaning here).
+
+  - CAST: see "Casting functions" below. Only EXPORT can be present.
+
+
+Accessors
+=========
+
+  They are methods used to let other sub-projects of the same PACKAGE or
+foreign projects to access variables of a unit. For example, to access a
+variable named "my_var", you can declare in the same unit a method using
+the same name. This is not allowed ordinary, so the special tags "SETTER"
+and/or "GETTER" must be added (and possibly, "EXPORT"):
+
+  FUNC my_var; SETTER; GETTER;
+  END FUNC
+
+  When the "GETTER" tag is used, the invocation of the method will return
+to the caller the current content of the variable having the same name. The
+"RETURN" statement is not needed here as the returned type is the one of the
+variable.
+
+  When the "SETTER" tag is used, then the function can exceptionaly be
+assigned a value, which is considered as the only parameter to it:
+
+  xxx.my_var := 3; (* equivalent to VOID xxx.my_var(3); *)
+  
+  No body is needed for an accessor, but if it has one, for a GETTER the value
+that is returned is always the value of the associated variable and for one 
+SETTER the code may raise errors or alter the value that was set to the
+variable on entry.
+
+  A "SETTER" only accessor makes the variable write-only from foreign code.
+  A "GETTER" only accessor makes the variable read-only from foreign code.
+
+
+The INIT tag
+============
+
+  This tag can be applied to a procedure, many times in a code-unit but only 
+once for a PROGRAM, SINGLETON or LIBRARY (and never for a SPEC). This type of
+procedure will be called when the running context of the associated unit has
+been created, either automatically or after use of the START statement (for
+a code-unit). It can have parameters; for a PROGRAM it is the ARRAY of the
+parameters passed by the operating system.
+
+    Examples:  UNIT test1; PROGRAM;
+               PROC test_main (args : ARRAY); INIT;
+               END PROC
+               END UNIT;
+
+               UNIT test2; SINGLETON;
+               VAR { a : INT; }
+               PROC init; INIT;
+               END PROC;
+               END UNIT;
+
+               UNIT test3;
+               VAR { a : INT; }
+               PROC init1; INIT; (* one can use "START test3;" *)
+               a := 0;
+               END PROC;
+               PROC init2 (x : INT); INIT; (* one can use "START test3(2); *)
+               a := x;
+               END PROC;
+               END UNIT;
+
+    If multiple factories are available, their signatures must not be the same.
+
+
+The EXIT tag
+============
+
+  This tag may be applied to only one procedure of a LIBRARY unit, a SINGLETON
+unit or a code-unit. The method is then called just before the running context
+of the unit is destroyed, for example to run cleanup tasks.
+
+    Example: UNIT test;
+             PROC cleanup; EXIT;
+             ..
+             END PROC;
+
+The REF type
+============
+
+  A variable of the REF type can store a reference to any runtime element,
+whatever the element's type is (a litteral, a constant, a method, another
+variable, ..).
+
+  Any runtime element may so be assigned to a REF variable. To access to the
+runtime element content, a REF variable can be dereferenced using the @ ope-
+rator. When using a dereferenced value, the real type of the item is checked.
+A REF variable cannot be initialized in its declaration (under the VAR block). 
+
+  The operator @ has the highest priority.
+
+    VAR {
+      r : REF; (* default value is NONE *)
+      rb : REF;
+      a : ARRAY[10] OF INT;
+      b : INT;
+      u : another_unit_type;
+    }
+    PROC my_proc (INT x);
+    ..
+    END PROC;
+    ..
+    r := b; (* error, r is reference and b a variable *)
+    r := REF b; (* refers to variable b *)
+            (* TYPE OF r = "VAR" and TYPE OF @r = "ARRAY" *)
+    r := r + 1; (* error, r is a reference *)
+    @r++; (* ok *)
+    @r = 3; (* ok, b = 3 *)
+    CALL @r; (* error, bad type *)
+    r := REF u;
+    CALL @r.a_method; (* ok, call of u.a_method *)
+    r := REF my_proc;
+    CALL r(2); (* error, r is a reference *)
+    CALL @b(2); (* error, b is not a reference *)
+    rb := REF b;
+    CALL @r([@rb]); (* ok, same as my_proc([b]) *)
+    r := rb; (* now r and rb both reference b *)
+
+  For a REF variable, only three operations are supported:
+
+  (1) assignment using the operator :=. The right part may be another refe-
+      rence variable in this case the two variables will reference the same
+      runtime element. Else the key word REF must be used, followed by the
+      runtime element to reference.
+
+  (2) equality using the operator =, which tests if the runtime elements
+      referenced on both side of the equal sign are the same.
+
+  (3) deference using @
+
+      Example:
+
+        VAR {
+          r1 : REF;
+          r2 : REF;
+          a : INT := 1;
+          b : INT := 1;
+        }
+        ..
+        r1 := REF a;
+        r2 := REF b: (* here r1 <> r2 but @r1 = @r2 *)
+        r1 := REF b; (* here r1 = r2, r2 = r1, r1 = b, r2 = b *)
+
+  As explained above, if a REF variable is assigned the runtime context of some
+code-unit and that context is destroyed, then this REF variable is set to NONE
+because the runtime element (i.e. the runtime context of the unit) does not
+exists any more. Same thing for local references:
+
+    UNIT ref_test;
+    VAR {
+      r : REF;
+    }
+    PROC ref1;
+    VAR { a : INT := 1; }
+    r := REF a;
+    @r := 2; (* ok, now a = 2 *)
+    END PROC;
+    PROC ref2;
+    (* here r = NONE *)
+    CALL ref1;
+    (* here r = NONE again *)
+    END PROC;
+
+  References can be used at a deepest level, but with caution:
+
+    VAR {
+      r1 : REF;
+      r2 : REF;
+      a : INT := 1;
+    }
+    ..
+    r1 := REF a; (* @r1 = 1 *)
+    r2 := REF r1; (* TYPE OF r2 = REF, TYPE OF @r2 = REF *)
+                  (* TYPE OF @@r2 = INT, @@r2 = 1 *)
+    @@r2 := 3; (* ok, a = 3 *)
+
+
+Error management and the ERROR tag
+==================================
+
+  Commonly, two types or errors may occur during the execution of a program:
+
+  (1) errors that the programmer anticipated, providing a way to solve them,
+
+  (2) errors that were not anticipated, often named "exceptions", or critical
+      errors that cannot be corrected and often led to end of execution. A
+      simple example is a division by zero error.
+
+  The second type of errors can be catched using the ERROR tag applied to only
+one method of any unit (excepted the SPEC units). When such an error occurs in
+the running context of a unit, the execution flow is interrupted and is redi-
+rected to the procedure tagged "ERROR" in the same unit. If there is no such
+procedure, the PACKAGE, PROGRAM or LIBRARY unit of the project will be searched
+for such a procedure. If none is found, the execution aborts.
+
+  When using code-unit's extension, the ERROR procedure may be in one unit that
+was extended and not in the extension itself (the source code being merged, the
+procedure is available and may also be overwritten).
+
+  If a procedure tagged "ERROR" is found somewhere when a non-anticipated error
+occurs, then the execution flow is redirected to it. Inside this method, if the
+statement "RESUME;" is found, then the execution flow will restart at the point
+where the error occured; this can be used if the programmer has a way to correct
+the error. But note that this is the responsability of the programmer to ensure
+an infinite loop will not appear after consecutive errors.
+
+  Inside the "ERROR" procedure, a "RAISE" statement can be used to transfer the
+error management to the upper level unit, finally the PACKAGE, PROGRAM, LIBRARY
+one, else the execution aborts if no one is found.
+
+  The signature of such a method is:
+
+    PROC name (#INT#, #REF#); ERROR;
+
+  The first parameter is the error code (read-only).
+
+  The second parameter is a reference to the faulting running context.
+
+  At any time in the code source, the programmer can produce an error using the
+statement "RAISE xxx;" where "xxx" is the integer code of the error. You can
+also specify some runtime element: "RAISE xxx elt;" ("elt" being a REF variable
+identifier).
+
+  Error codes are integer values; the numbers 0 to 2^20 (excluded) are reserved
+to the compiler or interpreter. Other values are the programmer's ones. The 
+value zero (0) is used to specify that no error was raised.
+
+  Another way to catch an error is to use the GUARD structure:
+
+    VAR { err : INT; }
+    ..
+    GUARD (err) {
+        .. some code that may raise an error ..
+    }
+    (* here the variable "err" will store the error code, or *)
+    (* 0 if none occured *)
+ 
+
+TYPE OF applied to a reference
+==============================
+
+  Here is a summary of what the TYPE OF operator returns when applied to a
+REF variable "r" and the associated dereferenced runtime element "@r":
+
+  runtime element           | TYPE OF r      | TYPE OF @r
+  --------------------------|----------------|-------------------------------
+  unit                      | UNIT, LIBRARY, | full name of the unit
+                            | SINGLETON,     |
+                            | SPEC, PACKAGE  |
+  procedure                 | PROC           | full name of the method
+  function                  | FUNC           | full name of the function
+  variable                  | VAR            | type of the variable
+  constant                  | CONST          | type of the constant (guessed
+                            |                | by the compiler)
+  type                      | TYPE           | full name of the type
+  enumerated type           | ENUM           | full name of the type
+  another reference         | REF            | see column "TYPE OF r"
+  
+
+Common methods of the REF type
+==============================
+
+  Any variable of the REF type has the following methods:
+
+  - type: returns a constant ASCII string that is the name of the referenced
+          runtime element's type. For a REF variable "r", we have:
+ 
+          r.type = TYPE OF (@r)
+
+  - length: the length in bytes of the memory representation of the data of the
+            referenced runtime element (read-only).
+
+  In addition, the brackets can be used to access the memory area that stores
+the real content of the runtime element referenced by the variable. Use of this
+notation should be GUARDed unless the programmer's knows the exact memory repre-
+sentation of the data. The index is the index of the byte into memory (0-based).
+Such an access is not always possible.
+ 
+  Some assignments can also be done using the brackets. For example:
+
+    VAR { 
+      a : INT := 0xfefefefe;
+      r : REF;
+    }
+    ..
+    r := REF a; (* here r[0] = r[1] = r[2] = r[3] = 0xfe *)
+                (* r.length = 4 and r.type = "INT" *)
+    r[0] := 0; (* now a = 0xfefefe00 *)
+
+
+Casts
+=====
+
+  The tag CAST can be used to transform a value from one type into another
+compatible type; if this is not possible, an error will be raised. 
+
+  This tag is needed when there is a risk to loose some data during a statement
+execution.
+
+  A standard example is:
+
+    VAR {
+      b : +BYTE+;
+      c : INT := 0x100;
+      s : ASCII := "text";
+    }
+    ..
+    b := c; (* error because b can store values 0..255 *)
+    b := c; CAST; (* ok but b = 0 *)
+    c := s; CAST; (* error, not possible *)
+    c := 200*b-10; (* ok without cast, no loss of data possible *)
+  
+
+Casting of units
+================
+
+   As an example we will take a unit "test-unit1" and one extension named
+"test-unit1-ext". When assigning a running context of "test-unit1-ext" to
+a variable of type "test-unit1", the part of code that was added to unit1
+to form unit1-ext is frozen. Methods that were overwritten are forgotten and
+objects that were HIDDEN are restored.
+
+  This is done using the tag "CAST" to one assignment. But the running
+context of "test-unit1-ext" keeps that type.
+
+   VAR {
+     u1 : test-unit1;
+     u1s : test-unit1;
+     u2 : test-unit1-ext;
+     u2s : test-unit1-ext;
+   }
+   ..
+   START u1;
+   START u2;
+   u1s := u1; (* ok *)
+   u2s := u1; CAST; (* error, u2s can only refers to an extension of u1 *)
+   u1s := u2; (* error, not the same type *)
+   u1s := u2; CAST; (* ok u1s refers only to a part of the code of u2 *)
+                    (* TYPE OF u1s = test-unit1 *)
+                    (* TYPE OF u2 = test-unit1-ext *)
+
+
+Casting functions
+=================
+
+  A casting function is a function of a unit whose declaration uses the tag
+"CAST". It is used to transform the current unit's running context into another
+runtime element. This can be used only inside a dynamic unit. The type of the
+only parameter of a casting function is the type of the unit and must be read-
+only.
+
+  Example:
+
+    UNIT test;
+    (* a casting function must return a new runtime element *)
+    FUNC int_cast (#t# : test) : INT; CAST;
+    RETURN 0;
+    END FUNC
+    END UNIT;
+
+    .. in the same project ..
+    VAR {
+      n : INT;
+      t : test;
+    }
+    
+    START t;
+    n := t CAST; (* ok, n = 0, same as n := t.int_cast (#t#) *)
+    n := t; (* error *)
+    n := t + 1; CAST; (* ok, n = 1 *)
+
+   
+Logical operators
+=================
+
+  Only used with BOOL variables or constants:
+
+  - NOT: negate the value (NOT TRUE = FALSE)
+
+  - AND: logical AND
+  
+  - OR: logical OR
+
+
+Arithmetic operators
+====================
+
+  Common operations on reals or integers: +  -  *  / 
+
+  Operations on positive integers: DIV (division)
+                                   MOD (modulo, remainder)
+                                   POW (power of)
+
+  Comparators: <  >  <=  >=
+
+
+Operators working on binary data
+================================
+
+  These operators are bitwise ones, on positive integers only:
+
+  &   binary and
+  |   binary or
+  ^   binary xor
+  !   binary not
+
+
+Other operators
+===============
+
+  :=  assignment
+
+  =   equality
+
+  <>  different of
+
+  [ ] access to one element of an array or a memory area (byte)
+
+  
+Enumerated types
+================
+
+  A simple enumerated type may be declared in the TYPE { .. } block. One single
+type identifier is followed by an equal sign and, between parenthesis, the
+comma-separated list of values that the type defines.
+
+  Each value is a word constitued of letters and digits or underscore. The first
+letter may be uppercase.
+
+  Each value is associated a positive integer, starting from 0, in the order the
+values are listed between the parenthesis:
+
+    TYPE {
+      color = (Red, Green, Blue);
+    }
+
+  Some accessors are reserved for use with simple enumerated types:
+
+  - succ: returns the next value of the enumerated type or NONE
+  
+  - pred: returns the previous value of the enumerated type or NONE
+
+  - ord: returns the integer associated to a value (ordinal) or NONE
+
+  - value: returns the value associated to one integer or NONE
+
+  Exceptionally, accessor "value" can be used onto a variable of the enumerated
+type that is set to NONE.
+
+  Example (continued):
+
+    VAR { 
+      c : color := Green;
+      d : color;
+      i : INT;
+    }
+    ..
+    i := c.ord; (* i = 1 *)
+    d := c.succ; (* d = Blue *)
+    d := d.succ; (* d = NONE *)
+    d := d.value (c.pred.ord); (* d = Red *)
+
+
+Errors
+======
+
+ 0     no error reported
+ 1     use of uninitialized variable (set to NONE)
+ 2     division by zero
+
+  
+===============================================================================
+= SPECIFICATION LEVEL 1                                                       =
+===============================================================================
+  
+  [TODO: LONG keyword, multiplying by two the length]
+  [TODO: REAL ?]
+
